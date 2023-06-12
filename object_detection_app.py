@@ -1,74 +1,81 @@
+import json
+import warnings
+
+warnings.simplefilter(action='ignore', category=FutureWarning)
 import os
-import cv2
 import time
-import argparse
+import tkinter as tk
+import winsound
+from datetime import datetime
+from multiprocessing import Process
+from queue import Queue
+from threading import Thread
+
+import cv2
 import numpy as np
 import tensorflow as tf
 from PIL import Image, ImageTk
-import tkinter as tk
-from datetime import datetime 
 
-import winsound
+from object_detection.utils import label_map_util
+from utils.app_utils import FPS, WebcamVideoStream, draw_boxes_and_labels
+
 duration = 500  # millisecond
 freq = 440  # Hz
 
-from queue import Queue
-from threading import Thread
-from utils.app_utils import FPS, WebcamVideoStream, draw_boxes_and_labels
-from object_detection.utils import label_map_util
-from multiprocessing import Process
-from pushbullet import Pushbullet
-pb1 = Pushbullet("o.vjA8zDopKpzNTsV9sBrZgmnXpJXrxHzY") #Pranav
-pb2 = Pushbullet("o.W3fAkB4Nv9ycPws2LIr2JeY2wuOPYgJl") #Mahesh
+
+# from pushbullet import Pushbullet
+# pb1 = Pushbullet("o.vjA8zDopKpzNTsV9sBrZgmnXpJXrxHzY") #Pranav
+# pb2 = Pushbullet("o.W3fAkB4Nv9ycPws2LIr2JeY2wuOPYgJl") #Mahesh
 
 
 CWD_PATH = os.getcwd()
+with open("./parameters.json") as json_data:
+    CONFIG_DATA = json.load(json_data)
 
 #VideoCam specifications
-video_source=0
-width=640
-height=480
+video_source = 0
+width = 640
+height = 480
 
 #Data for GUI (Tkinter)
-skipCount=0
-skipFlag=0
-image_count=1
-coco_classes=['airplane', 'apple', 'backpack', 'banana', 'baseball bat', 'baseball glove', 'bear', 'bed', 'bench', 'bicycle', 'bird', 'boat', 'book', 'bottle', 'bowl', 
-'broccoli', 'bus', 'cake', 'car', 'carrot', 'cat', 'cell phone', 'chair', 'clock', 'couch', 'cow', 'cup', 'dining table', 'dog', 'donut', 'elephant', 'fire hydrant', 'fork',
- 'frisbee', 'giraffe', 'hair drier', 'handbag', 'horse', 'hot dog', 'keyboard', 'kite', 'knife', 'laptop', 'microwave', 'motorcycle', 'mouse', 'orange', 'oven', 'parking meter',
-  'person', 'pizza', 'potted plant', 'refrigerator', 'remote', 'sandwich', 'scissors', 'sheep', 'sink', 'skateboard', 'skis', 'snowboard', 'spoon', 'sports ball', 'stop sign', 
-  'suitcase', 'surfboard', 'teddy bear', 'tennis racket', 'tie', 'toaster', 'toilet', 'toothbrush', 'traffic light', 'train', 'truck', 'tv', 'umbrella', 'vase', 'wine glass', 'zebra']
-alert_classes=[]
+skipCount = 0
+skipFlag = 0
+image_count = 1
+coco_classes = CONFIG_DATA['coco_classes']
+alert_classes = []
 list_count = 0
+
+# GUI Helpers
 def addToList():
     global list_count
-    list_count+=1
-    valFromMenu=drop_down_val.get()
-    list_box.insert(list_count,valFromMenu)
+    list_count += 1
+    valFromMenu = drop_down_val.get()
+    list_box.insert(list_count, valFromMenu)
     alert_classes.append(valFromMenu)
     list_box.select_set(0)
 
+
 def removeFromList():
     global list_count
-    if(list_count==0):
+    if(list_count == 0):
         print("List is empty")
         return
-    valFromList=list_box.curselection()
+    valFromList = list_box.curselection()
     #print(valFromList)
     list_box.delete(valFromList)
     del alert_classes[valFromList[0]]
-    list_count-=1
+    list_count -= 1
     list_box.select_set(0)
 
-
-
 # Path to frozen detection graph. This is the actual model that is used for the object detection.
-MODEL_NAME = 'ssd_inception_v2_coco_11_06_2017'
+MODEL_NAME = CONFIG_DATA['model_name']
 # MODEL_NAME = 'ssd_mobilenet_v1_coco_2017_11_17'
-PATH_TO_CKPT = os.path.join(CWD_PATH, 'object_detection', MODEL_NAME, 'frozen_inference_graph.pb')
+PATH_TO_CKPT = os.path.join(
+    CWD_PATH, 'models', MODEL_NAME, 'frozen_inference_graph.pb')
 
 # List of the strings that is used to add correct label for each box.
-PATH_TO_LABELS = os.path.join(CWD_PATH, 'object_detection', 'data', 'mscoco_label_map.pbtxt')
+PATH_TO_LABELS = os.path.join(
+    CWD_PATH, 'object_detection', 'data', 'mscoco_label_map.pbtxt')
 
 NUM_CLASSES = 90
 
@@ -106,7 +113,7 @@ def detect_objects(image_np, sess, detection_graph):
         category_index=category_index,
         min_score_thresh=.7
     )
-    
+
     return dict(rect_points=rect_points, class_names=class_names, class_colors=class_colors)
 
 
@@ -129,20 +136,24 @@ def worker(input_q, output_q):
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         output_q.put(detect_objects(frame_rgb, sess, detection_graph))
 
-    fps.stop()
-    sess.close()
+    # fps.stop()
+    # sess.close()
+
+# Pushbullet helper
 def sendNotification(frame):
     winsound.Beep(freq, duration)
-    currentTime=datetime.now().strftime("%d-%m-%y;%H-%M-%S")
-    cv2.imwrite("Alert images/"+str(currentTime)+'.png',frame)
+    currentTime = datetime.now().strftime("%d-%m-%y;%H-%M-%S")
+    cv2.imwrite("Alert images/"+str(currentTime)+'.png', frame)
     #cv2.imwrite(str(currentTime)+'.png',frame)
 
     #push = pb.push_note("This is the title", "Warning")
-    with open("Alert images/"+str(currentTime)+".png", "rb") as pic:
-        file_data = pb1.upload_file(pic, str(currentTime)+".jpeg")
-    pb1.push_file(**file_data)
+    # with open("Alert images/"+str(currentTime)+".png", "rb") as pic:
+    #     file_data = pb1.upload_file(pic, str(currentTime)+".jpeg")
+    # pb1.push_file(**file_data)
+
+
 def display():
-    global skipCount,skipFlag
+    global skipCount, skipFlag
     frame = video_capture.read()
     input_q.put(frame)
 
@@ -153,28 +164,28 @@ def display():
         #print('[INFO] elapsed time: {:.2f}'.format(time.time() - t))
     else:
         font = cv2.FONT_HERSHEY_SIMPLEX
-        data = output_q.get() 
+        data = output_q.get()
         rec_points = data['rect_points']
         class_names = data['class_names']
         class_colors = data['class_colors']
         for point, name, color in zip(rec_points, class_names, class_colors):
             cv2.rectangle(frame, (int(point['xmin'] * width), int(point['ymin'] * height)),
-                              (int(point['xmax'] * width), int(point['ymax'] * height)), color, 3)
+                          (int(point['xmax'] * width), int(point['ymax'] * height)), color, 3)
             cv2.rectangle(frame, (int(point['xmin'] * width), int(point['ymin'] * height)),
-                              (int(point['xmin'] * width) + len(name[0]) * 6,
-                               int(point['ymin'] * height) - 10), color, -1, cv2.LINE_AA)
+                          (int(point['xmin'] * width) + len(name[0]) * 6,
+                           int(point['ymin'] * height) - 10), color, -1, cv2.LINE_AA)
             cv2.putText(frame, name[0], (int(point['xmin'] * width), int(point['ymin'] * height)), font,
-                            0.3, (0, 0, 0), 1)
-        if(skipFlag==0):
+                        0.3, (0, 0, 0), 1)
+        if(skipFlag == 0):
             for name in zip(class_names):
                 #print(str(name[0]).split("'",2)[1].split(':',1)[0].strip())
                 for i in alert_classes:
-                    if((str(name[0]).split("'",2)[1].split(':',1)[0].strip())==i):
-                        cv2.imshow('Alert',alert_img)
-                        skipFlag=1
+                    if((str(name[0]).split("'", 2)[1].split(':', 1)[0].strip()) == i):
+                        cv2.imshow('Alert', alert_img)
+                        skipFlag = 1
 
                         #cv2.imwrite('Alert images/'+str(image_count)+'.png',frame)
-                        t1=Thread(target=sendNotification,args=(frame,))
+                        t1 = Thread(target=sendNotification, args=(frame,))
                         t1.start()
                         """with open("Alert images/"+str(image_count)+".png", "rb") as pic:
                             file_data = pb.upload_file(pic, "Alert.jpeg")
@@ -184,52 +195,57 @@ def display():
         imgtk = ImageTk.PhotoImage(image=img)
         cam_output.imgtk = imgtk
         cam_output.configure(image=imgtk)
-        skipCount+=1
-        if(skipCount==7):
-            skipCount=0
-            skipFlag=0
+        skipCount += 1
+        if(skipCount == 7):
+            skipCount = 0
+            skipFlag = 0
         cam_output.after(250, display)
         fps.update()
         #print('[INFO] elapsed time: {:.2f}'.format(time.time() - t))
-        
+
+
 if __name__ == '__main__':
-    video_source=0
-    width=640
-    height=480
+    video_source = 0
+    width = 640
+    height = 480
     input_q = Queue(5)  # fps is better if queue is higher but then more lags
     output_q = Queue()
 
     root = tk.Tk()
-    root.title("Object recognition")
+    root.title("ASROD")
     #root.geometry("765x480")
 
     # menu right
-    menu_right = tk.Frame(root, width=200, height=480,bg="black")
+    menu_right = tk.Frame(root, width=200, height=480, bg="black")
     #menu_right_upper = tk.Frame(menu_right )#, height=240)
     #menu_right_lower = tk.Frame(menu_right)#, height=240)
 
-    label1=tk.Label(menu_right, text="Alert tags",font=("TImes", 12,"bold"),bg="blue")
-    label1.pack(fill = tk.X,pady=(0,5))
+    label1 = tk.Label(menu_right, text="Alert tags",
+                      font=("TImes", 12, "bold"), bg="blue")
+    label1.pack(fill=tk.X, pady=(0, 5))
     list_box = tk.Listbox(menu_right)
-    list_box_button = tk.Button(master=menu_right,text="Remove",command=removeFromList)
-    list_box.pack(fill = tk.X)
-    list_box_button.pack(fill = tk.X,pady=(5,0))
-    label2=tk.Label(menu_right, text="Select from",font=("Times", 12,"bold"),bg="blue")
-    label2.pack(fill = tk.X, pady=(20,0))
+    list_box_button = tk.Button(
+        master=menu_right, text="Remove", command=removeFromList)
+    list_box.pack(fill=tk.X)
+    list_box_button.pack(fill=tk.X, pady=(5, 0))
+    label2 = tk.Label(menu_right, text="Select from",
+                      font=("Times", 12, "bold"), bg="blue")
+    label2.pack(fill=tk.X, pady=(20, 0))
     drop_down_val = tk.StringVar(menu_right)
-    drop_down_val.set(coco_classes[0]) # default value
+    drop_down_val.set(coco_classes[0])  # default value
     drop_down_menu = tk.OptionMenu(menu_right, drop_down_val, *coco_classes)
-    drop_down_button = tk.Button(master=menu_right,text="Add",command=addToList)
-    drop_down_menu.pack(fill = tk.X,pady=(10,0))
-    drop_down_button.pack(fill = tk.X,pady=(5,0))
+    drop_down_button = tk.Button(
+        master=menu_right, text="Add", command=addToList)
+    drop_down_menu.pack(fill=tk.X, pady=(10, 0))
+    drop_down_button.pack(fill=tk.X, pady=(5, 0))
 
     #menu_right_upper.grid(column=0,row=0)
     #menu_right_lower.grid(column=0,row=1)
 
     cam_output = tk.Label(root)
 
-    cam_output.grid(column=0,row=0)
-    menu_right.grid(row=0, column=1,sticky="nsew")
+    cam_output.grid(column=0, row=0)
+    menu_right.grid(row=0, column=1, sticky="nsew")
 
     for i in range(1):
         t = Thread(target=worker, args=(input_q, output_q))
@@ -242,7 +258,7 @@ if __name__ == '__main__':
 
     fps = FPS().start()
     t = time.time()
-    alert_img = cv2.imread('alert.jpg',cv2.IMREAD_COLOR)
+    alert_img = cv2.imread('alert.jpg', cv2.IMREAD_COLOR)
     display()
     root.mainloop()
     fps.stop()
@@ -250,6 +266,3 @@ if __name__ == '__main__':
     print('[INFO] approx. FPS: {:.2f}'.format(fps.fps()))
     video_capture.stop()
     exit()
-#activate tensorflow
-#cd C:\Project\object_detector_app
-#python object_detection_multithreading.py
